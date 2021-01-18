@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +48,7 @@ type jdSecKill struct {
 	IsOk        bool
 	StartTime   time.Time
 	DiffTime    int64
+	PayPwd string
 }
 
 func NewJdSecKill(execPath string, skuId string, num, works int) *jdSecKill {
@@ -133,7 +135,12 @@ func (jsk *jdSecKill) GetReq(reqUrl string, params map[string]string, referer st
 }
 
 func (jsk *jdSecKill) SyncJdTime() {
-	resp, _ := http.Get("https://a.jd.com//ajax/queryServerData.html")
+	resp, err := http.Get("https://a.jd.com//ajax/queryServerData.html")
+	if err != nil {
+		logs.PrintErr(err)
+		os.Exit(0)
+		return
+	}
 	defer resp.Body.Close()
 	b, _ := ioutil.ReadAll(resp.Body)
 	r := gjson.ParseBytes(b)
@@ -250,6 +257,7 @@ func (jsk *jdSecKill) Run() error {
 		jsk.GetEidAndFp(),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			u := "https://item.jd.com/" + jsk.SkuId + ".html"
+			rand.Seed(time.Now().UnixNano())
 			_ = chromedp.Navigate(u).Do(ctx)
 			for i := 0; i < jsk.Works; i++ {
 				go func() {
@@ -268,6 +276,8 @@ func (jsk *jdSecKill) Run() error {
 					err := jsk.ReqSubmitSecKillOrder(jsk.bCtx)
 					if err != nil {
 						logs.PrintlnInfo(err, "等待重试")
+						i := rand.Intn(200)
+						time.Sleep(time.Duration(i) * time.Millisecond)
 						goto SecKillRE
 					}
 					_ = chromedp.Navigate("https://order.jd.com/center/list.action").Do(jsk.bCtx)
@@ -298,9 +308,13 @@ func (jsk *jdSecKill) WaitStart() {
 			return
 		default:
 		}
-		if global.UnixMilli()-jsk.DiffTime >= st {
-			logs.PrintlnInfo("时间到达。。。。开始执行")
+		d := global.UnixMilli()-jsk.DiffTime
+		if d >= st {
+			logs.PrintlnInfo("时间到达。。。。开始执行", time.Now().Format(global.DateTimeFormatStr))
 			break
+		}
+		if st - d - 4 > 0 {
+			time.Sleep(time.Duration(st - d - 4) * time.Millisecond)
 		}
 	}
 }
@@ -497,7 +511,7 @@ func (jsk *jdSecKill) GetOrderReqData() url.Values {
 		"invoicePhone":       []string{invoiceInfo.Get("invoicePhone").String()},
 		"invoicePhoneKey":    []string{invoiceInfo.Get("invoicePhoneKey").String()},
 		"invoice":            []string{"true"},
-		"password":           []string{""},
+		"password":           []string{jsk.PayPwd},
 		"codTimeType":        []string{"3"},
 		"paymentType":        []string{"4"},
 		"areaCode":           []string{""},
